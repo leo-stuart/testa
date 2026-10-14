@@ -131,6 +131,13 @@ const server = new McpServer(
   },
 );
 
+// Re-read settings on every call, so `testa config set …` in a terminal applies without restarting the agent.
+const registerTool = server.registerTool.bind(server);
+server.registerTool = (name, config, handler) => registerTool(name, config, async (...args) => {
+  applySettings(PROJECT);
+  return handler(...args);
+});
+
 server.registerTool('app_profile', {
   description: 'Context of the app under test: detected stack, app.json config (urls, bundleId, start commands, test accounts, allowRisky), knowledge.md notes learned in earlier sessions, discovered routes/screens, saved scenarios. Call first. init:true creates .testa/app.json from detection.',
   inputSchema: {
