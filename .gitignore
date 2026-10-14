@@ -1,0 +1,4 @@
+node_modules/
+.testa/
+*.tgz
+.DS_Store

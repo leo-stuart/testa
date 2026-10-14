@@ -1,0 +1,36 @@
+{
+  "name": "testa",
+  "version": "0.5.0",
+  "description": "Test the feature you just built on web and iOS Simulator from Claude Code, Codex or Cursor — any app, Jev-driven UI steps, per-project context.",
+  "type": "module",
+  "bin": {
+    "testa": "bin/testa.mjs",
+    "testa-mcp": "src/server.mjs"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "setup": "node bin/testa.mjs setup",
+    "doctor": "node bin/testa.mjs doctor",
+    "smoke": "node scripts/smoke.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "axe-core": "4.13.0",
+    "playwright": "1.64.1",
+    "zod": "^4.1.0"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "skill/",
+    "README.md"
+  ],
+  "os": [
+    "darwin",
+    "linux"
+  ]
+}
