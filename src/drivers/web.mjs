@@ -6,30 +6,9 @@ import { readFileSync } from 'node:fs';
 const require = createRequire(import.meta.url);
 let axeSource;
 
-// Fake cursor so a watching human can follow the test (Playwright never moves the real OS cursor).
-// pointer-events:none keeps it out of hit-testing; aria-hidden keeps it out of a11y audits.
-const CURSOR_SCRIPT = `(() => {
-  if (window.__ftCursor) return;
-  window.__ftCursor = true;
-  const mount = () => {
-    if (!document.body || document.getElementById('__ft_cursor')) return;
-    const c = document.createElement('div');
-    c.id = '__ft_cursor';
-    c.setAttribute('aria-hidden', 'true');
-    c.style.cssText = 'position:fixed;left:0;top:0;width:22px;height:22px;z-index:2147483647;pointer-events:none;transform:translate(-100px,-100px);';
-    c.innerHTML = '<svg width="22" height="22" viewBox="0 0 22 22"><path d="M3 2l14 8-6 1.5L8 18z" fill="#111" stroke="#fff" stroke-width="1.5"/></svg>';
-    const ring = document.createElement('div');
-    ring.setAttribute('aria-hidden', 'true');
-    ring.style.cssText = 'position:fixed;left:0;top:0;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;border:3px solid #ff3b6b;z-index:2147483646;pointer-events:none;opacity:0;';
-    document.body.append(ring, c);
-    addEventListener('mousemove', (e) => { c.style.transform = 'translate(' + (e.clientX - 3) + 'px,' + (e.clientY - 2) + 'px)'; }, true);
-    addEventListener('mousedown', (e) => {
-      ring.style.left = e.clientX + 'px'; ring.style.top = e.clientY + 'px';
-      ring.animate([{ opacity: 1, transform: 'scale(0.4)' }, { opacity: 0, transform: 'scale(1.6)' }], { duration: 450, easing: 'ease-out' });
-    }, true);
-  };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
-})()`;
+// Visible overlay (agent cursor, action label, target highlight, status HUD, human-needed banner)
+// so a watching human can follow the test. Playwright never moves the real OS cursor.
+const OVERLAY_SCRIPT = readFileSync(new URL('./overlay.js', import.meta.url), 'utf8');
 
 const INTERACTIVE = [
   'a[href]', 'button', 'input:not([type=hidden])', 'select', 'textarea', 'summary',
@@ -60,7 +39,7 @@ export class WebDriver {
     this.page = await this.context.newPage();
     await this.context.route('**/*', (route) => this.routeHandler(route));
     this.showCursor = !headless || process.env.TESTA_SHOW_CURSOR === '1';
-    if (this.showCursor && process.env.TESTA_SHOW_CURSOR !== '0') await this.context.addInitScript(CURSOR_SCRIPT);
+    if (this.showCursor && process.env.TESTA_SHOW_CURSOR !== '0') await this.context.addInitScript(OVERLAY_SCRIPT);
     const p = this.page;
     p.on('console', (m) => {
       if (m.type() === 'error' || m.type() === 'warning') this.events.push({ kind: `console.${m.type()}`, text: m.text().slice(0, 400) });
@@ -213,18 +192,42 @@ export class WebDriver {
     return { ...snap, where: p.url(), route: { name: u.pathname, params: Object.fromEntries(u.searchParams) } };
   }
 
-  /** Glide the (visible) cursor to the element so a human can follow along. */
-  async moveTo(loc) {
-    if (!this.showCursor || process.env.TESTA_SHOW_CURSOR === '0') return;
+  get overlay() { return this.showCursor && process.env.TESTA_SHOW_CURSOR !== '0'; }
+
+  /** Glide the visible cursor to the element (label + highlight) before acting, so a human can follow along. */
+  async moveTo(loc, [verb, name]) {
+    if (!this.overlay) return;
     await loc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
     const b = await loc.boundingBox().catch(() => null);
-    if (b) await this.page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
+    if (!b) return;
+    const radius = await loc.evaluate((e) => parseFloat(getComputedStyle(e).borderTopLeftRadius) || 0).catch(() => 0);
+    const x = b.x + b.width / 2;
+    const y = b.y + b.height / 2;
+    const from = await this.page.evaluate(() => window.__testa?.pos()).catch(() => null);
+    const dist = from ? Math.hypot(x - from.x, y - from.y) : 400;
+    const ms = Math.round(Math.min(900, Math.max(320, 260 + dist * 0.7)));
+    const glided = await this.page.evaluate(([x, y, ms, verb, name, rect]) => (window.__testa ? (window.__testa.move(x, y, ms, verb, name, rect), true) : false),
+      [x, y, ms, verb, name, { ...b, radius }]).catch(() => false);
+    if (glided) await this.page.waitForTimeout(ms + 140);
+    await this.page.mouse.move(x, y); // real pointer for hover states
+  }
+
+  cursorLabel(action, el) {
+    const name = el?.name?.slice(0, 60) ?? '';
+    // Never the typed value: it may be a secret.
+    return [{ type: 'Digitar', submit: 'Enviar' }[action] ?? 'Clicar', name];
+  }
+
+  /** Status HUD in the page (bottom-left). tone: run | ok | fail | human */
+  async hud(text, tone = 'run') {
+    if (!this.overlay || !this.page) return;
+    await this.page.evaluate(([t, tone]) => window.__testa?.hud(t, tone), [text, tone]).catch(() => {});
   }
 
   async act({ action, el, value }) {
     const p = this.page;
     const loc = el ? p.locator(`[data-ft-id="${el.id}"]`).first() : null;
-    if (loc) await this.moveTo(loc);
+    if (loc) await this.moveTo(loc, this.cursorLabel(action, el));
     switch (action) {
       case 'tap':
         await loc.click({ timeout: 4000 });
@@ -244,10 +247,17 @@ export class WebDriver {
       default: throw new Error(`web: unknown action ${action}`);
     }
     await this.settle();
+    if (this.overlay) await p.evaluate(() => window.__testa?.clear()).catch(() => {});
   }
 
   async screenshot(path) {
-    await this.page.screenshot({ path, fullPage: false });
+    // Evidence shows the app, not the overlay.
+    if (this.overlay) await this.page.evaluate(() => window.__testa?.visible(false)).catch(() => {});
+    try {
+      await this.page.screenshot({ path, fullPage: false });
+    } finally {
+      if (this.overlay) await this.page.evaluate(() => window.__testa?.visible(true)).catch(() => {});
+    }
     return path;
   }
 

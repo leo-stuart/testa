@@ -122,6 +122,8 @@ export async function runScenario({ driver, goal, hints = [], data = {}, asserti
     return r.answers;
   };
 
+  const hud = (text, tone) => driver.hud?.(text, tone);
+  await hud(`Iniciando · ${goal}`);
   for (let i = 0; i < maxSteps; i++) {
     let t = Date.now();
     obs = annotate(await driver.observe(), prevObs, focus);
@@ -222,6 +224,7 @@ export async function runScenario({ driver, goal, hints = [], data = {}, asserti
       detail = `Repeating "${label}" without reaching the goal (last done p=${doneP}). Refine the goal/hints or check the screen with observe.`;
       break;
     }
+    await hud(`Passo ${steps.length + 1} · ${goal}`);
     t = Date.now();
     try {
       await driver.act({ action, el, value: dataKey ? data[dataKey] : undefined });
@@ -246,6 +249,11 @@ export async function runScenario({ driver, goal, hints = [], data = {}, asserti
   const captured = capture ? await driver.takeEvents() : { events: [], network: [] };
   const results = capture ? await checkAssertions(obs, assertions, captured) : [];
   const passed = status === 'done' && results.every((r) => r.pass);
+  const failedN = results.filter((r) => !r.pass).length;
+  if (capture) {
+    await hud(passed ? `Passou · ${results.length}/${results.length} casos` : status === 'done' ? `Falhou · ${failedN} de ${results.length} casos` : status === 'needs_human' ? 'Precisa de você · captcha' : `Parou · ${status}`,
+      passed ? 'ok' : status === 'needs_human' ? 'human' : 'fail');
+  }
   return {
     status: passed ? 'passed' : status === 'done' ? 'failed_assertions' : status,
     detail, steps, history, assertions: results, events: captured.events, network: captured.network, logSource: captured.source,
