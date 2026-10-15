@@ -18,6 +18,7 @@ export const SETTINGS = {
   jevModel:    { env: 'JEV_MODEL', type: 'string', default: 'jev-latest', desc: 'Jev model id' },
   headless:    { env: 'TESTA_HEADLESS', type: 'bool', default: true, desc: 'Hide the browser window (false = watch tests run)', toEnv: toEnvBool },
   showCursor:  { env: 'TESTA_SHOW_CURSOR', type: 'bool', desc: 'Draw a fake cursor in the page (default: on when the browser is visible)', toEnv: toEnvBool },
+  humanWait:   { env: 'TESTA_HUMAN_WAIT', type: 'number', default: 180, desc: 'Seconds a visible run waits for you to solve a captcha before stopping with needs_human' },
   slowMo:      { env: 'TESTA_SLOWMO', type: 'number', default: 150, desc: 'ms pause between browser actions when visible' },
   allowedHosts:{ env: 'TESTA_ALLOWED_HOSTS', type: 'list', desc: 'Extra web hosts allowed besides localhost/*.vercel.app/ngrok ("*" = any)' },
   hideLogBox:  { env: 'TESTA_HIDE_LOGBOX', type: 'bool', default: true, desc: 'Hide React Native LogBox toasts during runs', toEnv: toEnvBool },

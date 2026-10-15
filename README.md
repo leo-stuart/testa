@@ -111,6 +111,7 @@ One Jev pass per step (done? action incl. value→field pairs? tap target?), a f
 
 ## Safety
 
+- Captchas are never solved by testa: when one is on screen, a visible run shows a banner, sends a desktop notification and waits (`humanWait`, default 180s) for you to solve it, then continues; otherwise it stops with `needs_human`.
 - Local gate blocks taps on sensitive labels (pagar, excluir, enviar, finalizar pedido, checkout, logout…) → `needs_confirmation` until `allowRisky: true` (or the label is in the project's `allowRisky`, e.g. a staging-only flow).
 - Web hosts limited to localhost, *.vercel.app, ngrok + the project's `allowedHosts`. `TESTA_ALLOWED_HOSTS=*` disables.
 - Project data stays in the git-ignored `.testa/`. Test accounts live in its `app.json` (or `"$VAR"` from env); `app_profile` masks their secrets, scenarios store only the account name, `remember` rejects secrets. Never use production credentials.

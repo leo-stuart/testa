@@ -2,6 +2,7 @@
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
 let axeSource;
@@ -9,6 +10,38 @@ let axeSource;
 // Visible overlay (agent cursor, action label, target highlight, status HUD, human-needed banner)
 // so a watching human can follow the test. Playwright never moves the real OS cursor.
 const OVERLAY_SCRIPT = readFileSync(new URL('./overlay.js', import.meta.url), 'utf8');
+
+// Captcha / bot challenges a test must never try to solve: a person does it in the visible browser.
+const CAPTCHA_PROBE = () => {
+  const vis = (e) => {
+    const r = e.getBoundingClientRect();
+    const st = getComputedStyle(e);
+    return r.width > 30 && r.height > 30 && r.bottom > 0 && r.top < innerHeight && st.visibility !== 'hidden' && st.opacity !== '0';
+  };
+  const rectOf = (e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
+  const RESP = '[name="g-recaptcha-response"],[name="h-captcha-response"],[name="cf-turnstile-response"]';
+  const kindOf = (src) => (/hcaptcha/.test(src) ? 'hCaptcha' : /cloudflare/.test(src) ? 'Cloudflare Turnstile' : 'reCAPTCHA');
+  const frames = [...document.querySelectorAll('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],iframe[src*="challenges.cloudflare.com"],iframe[title*="captcha" i]')]
+    .filter((f) => vis(f) && !f.closest('.grecaptcha-badge')); // invisible v3 badge needs no human
+  // Whole-page bot checks (Google /sorry, Cloudflare challenge) block until passed, answered or not.
+  if (/\/sorry\/|\/cdn-cgi\/challenge/.test(location.pathname) || document.querySelector('#challenge-form,#cf-challenge-running')) {
+    return { kind: frames[0] ? kindOf(frames[0].src) : 'verificação anti-robô', rect: frames[0] ? rectOf(frames[0]) : null };
+  }
+  for (const f of frames) {
+    let scope = f.parentElement;
+    while (scope && !scope.querySelector(RESP)) scope = scope.parentElement;
+    if (scope?.querySelector(RESP)?.value) continue; // already answered
+    return { kind: kindOf(f.src), rect: rectOf(f) };
+  }
+  return null;
+};
+
+/** Best-effort desktop notification (macOS) so the person notices even when the terminal has focus. */
+function notify(title, text) {
+  if (process.platform !== 'darwin') return;
+  const q = (v) => JSON.stringify(String(v));
+  execFile('osascript', ['-e', `display notification ${q(text)} with title ${q(title)} sound name "Glass"`], () => {});
+}
 
 const INTERACTIVE = [
   'a[href]', 'button', 'input:not([type=hidden])', 'select', 'textarea', 'summary',
@@ -222,6 +255,46 @@ export class WebDriver {
   async hud(text, tone = 'run') {
     if (!this.overlay || !this.page) return;
     await this.page.evaluate(([t, tone]) => window.__testa?.hud(t, tone), [text, tone]).catch(() => {});
+  }
+
+  async captcha() {
+    if (!this.page) return null;
+    return this.page.evaluate(CAPTCHA_PROBE).catch(() => null);
+  }
+
+  /**
+   * Captcha on screen → a person solves it. Visible browser: show a banner, notify, and wait until it
+   * is answered (or timeout). Hidden browser: report it right away. Never tries to solve it itself.
+   * Returns null (no captcha) or { status: 'solved' | 'timeout' | 'headless', kind, ms }.
+   */
+  async humanGate({ timeoutMs = Number(process.env.TESTA_HUMAN_WAIT ?? 180) * 1000 } = {}) {
+    let c = await this.captcha();
+    if (!c) return null;
+    if (this.headless) return { status: 'headless', kind: c.kind, ms: 0 };
+    const { kind } = c;
+    const t0 = Date.now();
+    const deadline = t0 + timeoutMs;
+    const show = (c) => this.page.evaluate(([c, deadline]) => window.__testa?.human(true, {
+      title: 'Captcha (' + c.kind + ') — resolva aqui no navegador',
+      text: 'O testa não resolve captcha. Assim que você concluir, o teste continua sozinho.',
+      deadline, rect: c.rect,
+    }), [c, deadline]).catch(() => {});
+    await this.page.bringToFront().catch(() => {});
+    await show(c);
+    await this.hud('Aguardando você resolver o captcha', 'human');
+    notify('testa', `${c.kind} no teste: resolva no navegador`);
+    console.error(`[testa] ${c.kind} on screen — waiting up to ${Math.round(timeoutMs / 1000)}s for a human to solve it`);
+    let seen = JSON.stringify(c.rect);
+    while (Date.now() < deadline) {
+      await this.page.waitForTimeout(700).catch(() => {});
+      c = await this.captcha();
+      if (!c) break;
+      if (JSON.stringify(c.rect) !== seen) { seen = JSON.stringify(c.rect); await show(c); } // re-mounted after navigation
+    }
+    await this.page.evaluate(() => window.__testa?.human(false)).catch(() => {});
+    if (c) return { status: 'timeout', kind, ms: Date.now() - t0 };
+    await this.settle();
+    return { status: 'solved', kind, ms: Date.now() - t0 };
   }
 
   async act({ action, el, value }) {

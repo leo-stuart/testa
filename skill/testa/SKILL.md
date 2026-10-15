@@ -27,6 +27,7 @@ The `testa` MCP verifies features in the running app, for any project. You plan;
    - `failed_assertions` → read errors/network first, then code; fix; re-run.
    - `unverified` (replay) → the saved scenario has no assertions; nothing was checked. Re-run it with `run_scenario` + assertions + `saveAs`.
    - `stuck` / `uncertain` → the detail says why (missing data for visible fields, repeated action, low confidence). Add data/hints, or `observe` + `act`.
+   - `needs_human` → a captcha/bot check is on screen. testa never solves captchas. In a visible browser the run already waited for the user (banner + notification, `humanWait` seconds); tell the user to solve it in the open browser and re-run. Headless → re-run with `headless: false`. For local/staging, suggest the provider's test keys.
    - `needs_confirmation` → sensitive control next (pagar, excluir, finalizar…). Ask the user before `allowRisky: true`. Dev/staging only.
 7. **Remember** — when you learn something non-obvious about the app (a required step, a flaky area, an env quirk), call `remember`. Short facts, no secrets.
 8. **Regression** — later: `list_scenarios` + `replay`.

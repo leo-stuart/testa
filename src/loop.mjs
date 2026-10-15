@@ -125,6 +125,16 @@ export async function runScenario({ driver, goal, hints = [], data = {}, asserti
   const hud = (text, tone) => driver.hud?.(text, tone);
   await hud(`Iniciando · ${goal}`);
   for (let i = 0; i < maxSteps; i++) {
+    // Captcha/bot check: a person solves it (never the test). Waits in a visible browser.
+    const gate = await driver.humanGate?.();
+    if (gate && gate.status !== 'solved') {
+      status = 'needs_human';
+      detail = gate.status === 'headless'
+        ? `${gate.kind} on screen. testa never solves captchas: re-run with headless=false so the user can solve it in the browser (the run waits), or use the provider's test keys in local/staging.`
+        : `${gate.kind} was not solved within ${Math.round(gate.ms / 1000)}s. Ask the user to solve it in the open browser, then re-run.`;
+      break;
+    }
+    if (gate) { history.push(`(user solved ${gate.kind} in ${Math.round(gate.ms / 1000)}s)`); prevSig = ''; sameCount = 0; }
     let t = Date.now();
     obs = annotate(await driver.observe(), prevObs, focus);
     // Empty tree = splash/transition: wait (up to ~10s) without spending a step.
@@ -280,6 +290,10 @@ export async function replayScenario({ driver, scenario, data = {}, allowRisky =
   const steps = scenario.steps.map((s) => ({ ...s }));
   const healed = [];
   for (const [i, s] of steps.entries()) {
+    const gate = await driver.humanGate?.();
+    if (gate && gate.status !== 'solved') {
+      return { status: 'needs_human', detail: `${gate.kind} on screen before step ${i + 1}; a person must solve it (headless=false lets the run wait for them).`, log, healed, events: [], timing: { totalMs: Date.now() - t0 } };
+    }
     let el = null;
     let obs;
     if (s.name !== undefined || s.testId) {
