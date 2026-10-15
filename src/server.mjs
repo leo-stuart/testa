@@ -12,6 +12,7 @@ import { runScenario, replayScenario, describeEl, annotate } from './loop.mjs';
 import { featureContext } from './context.mjs';
 import { hostAllowed } from './policy.mjs';
 import { hasJevKey } from './jev.mjs';
+import { vagueAssertions, ASSERTION_HELP } from './assertions.mjs';
 import { startApp, stopApp, tail, listApps, errorsSince, stopAll } from './processes.mjs';
 import { Profile } from './profile.mjs';
 import { SETTINGS, applySettings, resolveSettings, mask, writeUserSetting, writeProjectSetting, CONFIG_FILE } from './settings.mjs';
@@ -372,7 +373,8 @@ function formatReport(r, extra = '') {
 server.registerTool('run_scenario', {
   description:
     'Run one test scenario end-to-end. Jev picks each step from the live UI; you get back pass/fail, steps, assertion results, console/network/RN/server-log errors, HTTP calls, accessibility issues, final screen and an evidence dir. ' +
-    'Give a precise goal, hints (ordered steps), data for inputs (Jev never invents text) or an app.json account, assertions (may reference HTTP calls), focus (testIDs/strings from feature_context), ' +
+    'Test cases are required: pass the assertions that prove the feature works (observable facts, may reference HTTP calls). ' +
+    'Give a precise goal, hints (ordered steps), data for inputs (Jev never invents text) or an app.json account, focus (testIDs/strings from feature_context), ' +
     'start (jump to a screen first) and mocks (fake API responses to test error/edge states).',
   inputSchema: {
     platform,
@@ -380,7 +382,7 @@ server.registerTool('run_scenario', {
     hints: z.array(z.string()).optional().describe('Ordered tips, e.g. ["Open a product", "Tap Buy", "Toggle Add gift wrap"]'),
     data: z.record(z.string(), z.string()).optional().describe('Values to type, keyed by name, e.g. {"cep":"01310100"}'),
     account: z.string().optional().describe('Test account from app.json accounts (secrets come from env); merged into data'),
-    assertions: z.array(z.string()).optional().describe('e.g. ["Gift wrap appears in the order summary", "A POST to /orders returned 2xx", "No error message is shown"]'),
+    assertions: z.array(z.string().min(1)).min(1).describe(`REQUIRED test cases checked at the end. ${ASSERTION_HELP}`),
     focus: z.array(z.string()).optional().describe('testIDs/labels touched by the feature; tagged [feature] for Jev'),
     start: z.object({ screen: z.string(), params: z.any().optional() }).optional().describe('ios RN: navigate here before starting (skips UI navigation)'),
     url: z.string().optional().describe('web: open this url/path first; ios: deep link'),
@@ -398,6 +400,8 @@ server.registerTool('run_scenario', {
   const p = args.platform;
   const t0 = Date.now();
   const driver = drivers[p];
+  const vague = vagueAssertions(args.assertions);
+  if (vague.length) return fail(new Error(`Vague assertion(s): ${vague.map((a) => `"${a}"`).join(', ')}. ${ASSERTION_HELP}`));
   try {
     const data = resolveData(args.account, args.data);
     let sessionFile;
@@ -421,7 +425,7 @@ server.registerTool('run_scenario', {
 
     const dir = runDir();
     const r = await runScenario({
-      driver, goal: args.goal, hints: args.hints, data, assertions: args.assertions ?? [], focus: args.focus ?? [],
+      driver, goal: args.goal, hints: args.hints, data, assertions: args.assertions, focus: args.focus ?? [],
       maxSteps: args.maxSteps, allowRisky: args.allowRisky, riskAllow: cfg().allowRisky ?? [], eventsMarked: p === 'web',
       onStep: (n, label) => console.error(`[testa] ${n}. ${label}`),
     });
@@ -447,7 +451,7 @@ server.registerTool('run_scenario', {
         name: args.saveAs, platform: p, goal: args.goal, hints: args.hints, start, url: args.url, bundleId: args.bundleId,
         before: args.before, session: args.session, account: args.account, mocks: args.mocks,
         data: safeData, secretKeys: Object.keys(args.data ?? {}).filter((k) => SECRET_KEY.test(k)),
-        assertions: args.assertions ?? [], steps: r.steps.map(({ label, where, doneP, confidence, ...st }) => st), savedAt: new Date().toISOString(),
+        assertions: args.assertions, steps: r.steps.map(({ label, where, doneP, confidence, ...st }) => st), savedAt: new Date().toISOString(),
       }, null, 1));
       extra += `\nsaved scenario: ${file}`;
     }
@@ -459,7 +463,7 @@ server.registerTool('run_scenario', {
 });
 
 server.registerTool('replay', {
-  description: 'Replay a saved scenario deterministically (jumps to its saved start; no Jev per step; Jev only re-finds elements that changed and checks assertions). Healed steps are written back.',
+  description: 'Replay a saved scenario deterministically (jumps to its saved start; no Jev per step; Jev only re-finds elements that changed and checks assertions). Healed steps are written back. Scenarios saved without assertions end as "unverified", not passed.',
   inputSchema: {
     name: z.string(),
     data: z.record(z.string(), z.string()).optional().describe('Secret values not stored in the scenario (e.g. senha)'),
@@ -491,7 +495,7 @@ server.registerTool('replay', {
     r.events = [...(r.events ?? []), ...errorsSince(t0)];
     if (r.finalScreen) lastObs[p] = r.finalScreen;
     let extra = '';
-    if (r.healed?.length && r.status === 'passed') {
+    if (r.healed?.length && (r.status === 'passed' || r.status === 'unverified')) {
       writeFileSync(file, JSON.stringify({ ...sc, steps: r.steps.map(({ id, ...s }) => s), healedAt: new Date().toISOString() }, null, 1));
       extra = `\nscenario updated with ${r.healed.length} healed step(s)`;
     }

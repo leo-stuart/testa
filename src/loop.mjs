@@ -308,9 +308,13 @@ export async function replayScenario({ driver, scenario, data = {}, allowRisky =
   if (skipEvents) return { status: 'passed', log, healed, steps, timing: { totalMs: Date.now() - t0 } };
   const obs = await driver.observe();
   const captured = await driver.takeEvents();
-  const results = hasJevKey() ? await checkAssertions(obs, scenario.assertions ?? [], captured) : [];
+  const assertions = scenario.assertions ?? [];
+  const results = hasJevKey() ? await checkAssertions(obs, assertions, captured) : [];
+  // Steps replayed but nothing checked: say so instead of reporting a pass.
+  const unverified = !assertions.length;
   return {
-    status: results.every((r) => r.pass) ? 'passed' : 'failed_assertions',
+    status: unverified ? 'unverified' : results.every((r) => r.pass) ? 'passed' : 'failed_assertions',
+    detail: unverified ? 'Scenario has no assertions; steps replayed but nothing was checked. Add assertions to the scenario file or re-run with run_scenario + saveAs.' : undefined,
     log, healed, steps, assertions: results, events: captured.events, network: captured.network,
     finalScreen: obs, timing: { totalMs: Date.now() - t0 },
   };

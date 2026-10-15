@@ -121,4 +121,5 @@ One Jev pass per step (done? action incl. value→field pairs? tap target?), a f
 - iOS: AXe types US-keyboard chars; other text is pasted via the simulator pasteboard.
 - Hidden-input and layer detection are heuristics tuned on React Native apps; `a11y_audit` lists what they had to guess — fixing those labels makes tests (and VoiceOver) more reliable.
 - Route/navigation/mocks on iOS need a React Native dev build connected to Metro.
+- `assertions` are required in `run_scenario` (they are the test cases); vague ones like "works" are rejected. Replaying a scenario saved without them ends as `unverified`.
 - Jev is weak at counting/math/dates: phrase assertions as observable facts.
